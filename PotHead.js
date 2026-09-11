@@ -143,6 +143,53 @@ function parseHoursForToday(hoursStr) {
   return { today: cleaned || todaySegment, openNow: openNow, raw: raw }
 }
 
+function parseWeeklyHours(hoursStr) {
+  if (!hoursStr || typeof hoursStr !== "string" || hoursStr.trim().length === 0) return []
+  var raw = hoursStr.trim()
+  var parts = raw.split(/;\s*|\|\s*/g)
+  var todayIdx = new Date().getDay()
+  // Map day abbreviations to index for isToday check
+  var dayMap = { "sun":0, "sunday":0, "mon":1, "monday":1, "tues":2, "tue":2, "tuesday":2, "wed":3, "wednesday":3, "thurs":4, "thu":4, "thursday":4, "fri":5, "friday":5, "sat":6, "saturday":6 }
+  var out = []
+  for (var i = 0; i < parts.length; i++) {
+    var p = parts[i].trim()
+    if (!p) continue
+    var m = p.match(/^\s*([A-Za-z]+)\s*:?\s*(.*)$/)
+    var dayLabel = ""
+    var hoursPart = p
+    if (m) {
+      dayLabel = m[1]
+      hoursPart = m[2].trim() || "Closed"
+      // Normalize day label to 3 letters
+      var dl = dayLabel.toLowerCase()
+      if (dl.indexOf("tues")===0) dayLabel = "Tue"
+      else if (dl.indexOf("thurs")===0) dayLabel = "Thu"
+      else dayLabel = dayLabel.slice(0,3)
+      // Capitalize
+      dayLabel = dayLabel.charAt(0).toUpperCase() + dayLabel.slice(1,2).toLowerCase() + (dayLabel.length>2 ? dayLabel.slice(2).toLowerCase() : "")
+      if (dayLabel.toLowerCase() === "tues") dayLabel = "Tue"
+      if (dayLabel.toLowerCase() === "thurs") dayLabel = "Thu"
+    }
+    var isToday = false
+    if (dayLabel) {
+      var dkey = dayLabel.toLowerCase()
+      if (dayMap[dkey] !== undefined && dayMap[dkey] === todayIdx) isToday = true
+      // Handle Tues/Thu variations
+      if (!isToday) {
+        // Check full raw part for today match as fallback
+        var pl = p.toLowerCase()
+        var todayAbbrs = [ ["sun","sunday"], ["mon","monday"], ["tues","tue","tuesday"], ["wed","wednesday"], ["thurs","thu","thursday"], ["fri","friday"], ["sat","saturday"] ]
+        var cands = todayAbbrs[todayIdx]
+        for (var k=0;k<cands.length;k++) if (pl.indexOf(cands[k])!==-1) { isToday=true; break }
+      }
+    }
+    out.push({ day: dayLabel || "Day", hours: hoursPart, isToday: isToday, raw: p })
+  }
+  // If we couldn't split (no ;), ensure at least one entry
+  if (out.length===0 && raw) out.push({ day: "", hours: raw, isToday: false, raw: raw })
+  return out
+}
+
 function sortByDistance(list, lat, lon, units) {
   var out = []
   for (var i = 0; i < list.length; i++) {
@@ -173,6 +220,7 @@ if (typeof module !== "undefined") {
     normalizeDispensary: normalizeDispensary,
     buildAddress: buildAddress,
     parseHoursForToday: parseHoursForToday,
+    parseWeeklyHours: parseWeeklyHours,
     sortByDistance: sortByDistance
   }
 }

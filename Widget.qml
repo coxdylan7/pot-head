@@ -74,35 +74,29 @@ BarWidget {
     }
   }
 
-  // Reliable click: TapHandler + MouseArea fallback, covers full parent
-  TapHandler {
-    id: tap
-    acceptedButtons: Qt.LeftButton
-    gesturePolicy: TapHandler.ReleaseWithinBounds
-    onTapped: {
-      console.log("pot-head: tapped popupOpen was", root.popupOpen)
-      root.popupOpen = !root.popupOpen
+  // Hover to show — no click needed
+  HoverHandler {
+    id: hoverHandler
+    onHoveredChanged: {
+      if (hovered) root.popupOpen = true
+      else if (!popup.containsMouse) root.popupOpen = false
     }
   }
   MouseArea {
     anchors.fill: parent
-    z: 2
+    z: 10
     hoverEnabled: true
     cursorShape: Qt.PointingHandCursor
-    acceptedButtons: Qt.LeftButton
-    propagateComposedEvents: false
-    onClicked: {
-      console.log("pot-head: clicked popupOpen was", root.popupOpen)
-      root.popupOpen = !root.popupOpen
+    acceptedButtons: Qt.NoButton
+    propagateComposedEvents: true
+    onEntered: {
+      root.popupOpen = true
+      if (bar) bar.showTooltip(root, closest ? (Pot.buildAddress(closest) + " — " + (closest.distance || "") + " " + (service ? service.units : "mi")) : displayName)
     }
-    onPressed: {
-      // fallback for press without release
-      if (!tap.pressed) {
-        // handled by TapHandler, avoid double toggle
-      }
+    onExited: {
+      if (!popup.containsMouse) root.popupOpen = false
+      if (bar) bar.hideTooltip(root)
     }
-    onEntered: if (bar) bar.showTooltip(root, closest ? (Pot.buildAddress(closest) + " — " + (closest.distance || "") + " " + (service ? service.units : "mi")) : displayName)
-    onExited: if (bar) bar.hideTooltip(root)
   }
 
   PopupCard {
@@ -111,9 +105,14 @@ BarWidget {
     owner: root
     bar: root.bar
     open: root.popupOpen
+    triggerMode: "hover"
     contentWidth: Math.min(460, Math.max(380, popup.fittedContentWidth(Style.space(420))))
     contentHeight: popup.fittedContentHeight(flick.contentHeight + Style.space(24), Style.space(860))
     onVisibleChanged: if (!visible) root.popupOpen = false
+    onContainsMouseChanged: {
+      if (containsMouse) root.popupOpen = true
+      else if (!hoverHandler.hovered) root.popupOpen = false
+    }
 
     Flickable {
       id: flick
@@ -638,29 +637,96 @@ BarWidget {
           }
         }
 
-        // Hours
+        // Hours — readable weekly table
         Column {
           width: parent.width
-          spacing: 2
-          Text { text: "Hours"; color: Util.alpha(Color.foreground, 0.6); font.family: Style.font.family; font.pixelSize: Style.font.caption; font.bold: true }
-          Text {
+          spacing: Style.space(6)
+          Row {
             width: parent.width
-            property var hInfo: root.selectedDetail ? Pot.parseHoursForToday(root.selectedDetail.hours || "") : {today:"", openNow:null}
-            text: root.selectedDetail ? (root.selectedDetail.hours || "Hours unknown") : ""
-            color: Util.alpha(Color.foreground, 0.7)
-            font.family: Style.font.family
-            font.pixelSize: 11
-            wrapMode: Text.Wrap
+            spacing: Style.space(8)
+            Text { text: "Hours"; color: Util.alpha(Color.foreground, 0.6); font.family: Style.font.family; font.pixelSize: Style.font.caption; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+            Rectangle {
+              visible: root.selectedDetail && Pot.parseHoursForToday(root.selectedDetail.hours || "").openNow !== null
+              height: 18
+              width: 72
+              radius: 8
+              color: Pot.parseHoursForToday(root.selectedDetail ? (root.selectedDetail.hours || "") : "").openNow ? Util.alpha(Color.accent, 0.18) : Util.alpha(Color.urgent, 0.18)
+              border.color: Pot.parseHoursForToday(root.selectedDetail ? (root.selectedDetail.hours || "") : "").openNow ? Util.alpha(Color.accent, 0.3) : Util.alpha(Color.urgent, 0.3)
+              border.width: 1
+              Text { anchors.centerIn: parent; text: Pot.parseHoursForToday(root.selectedDetail ? (root.selectedDetail.hours || "") : "").openNow ? "Open now" : "Closed now"; color: Pot.parseHoursForToday(root.selectedDetail ? (root.selectedDetail.hours || "") : "").openNow ? Color.accent : Color.urgent; font.family: Style.font.family; font.pixelSize: 10; font.bold: true }
+            }
+            Text {
+              visible: root.selectedDetail && Pot.parseHoursForToday(root.selectedDetail.hours || "").today
+              text: Pot.parseHoursForToday(root.selectedDetail ? (root.selectedDetail.hours || "") : "").today
+              color: Util.alpha(Color.foreground, 0.55)
+              font.family: Style.font.family
+              font.pixelSize: 10
+              elide: Text.ElideRight
+              anchors.verticalCenter: parent.verticalCenter
+              width: parent.width - 80 - 72 - Style.space(16)
+            }
           }
           Rectangle {
-            visible: root.selectedDetail && Pot.parseHoursForToday(root.selectedDetail.hours || "").openNow !== null
-            height: 18
-            width: 56
+            width: parent.width
             radius: 8
-            color: Pot.parseHoursForToday(root.selectedDetail ? (root.selectedDetail.hours || "") : "").openNow ? Util.alpha(Color.accent, 0.18) : Util.alpha(Color.urgent, 0.18)
-            border.color: Pot.parseHoursForToday(root.selectedDetail ? (root.selectedDetail.hours || "") : "").openNow ? Util.alpha(Color.accent, 0.3) : Util.alpha(Color.urgent, 0.3)
+            color: Util.alpha(Color.foreground, 0.04)
+            border.color: Util.alpha(Color.foreground, 0.08)
             border.width: 1
-            Text { anchors.centerIn: parent; text: Pot.parseHoursForToday(root.selectedDetail ? (root.selectedDetail.hours || "") : "").openNow ? "Open now" : "Closed now"; color: Pot.parseHoursForToday(root.selectedDetail ? (root.selectedDetail.hours || "") : "").openNow ? Color.accent : Color.urgent; font.family: Style.font.family; font.pixelSize: 10; font.bold: true }
+            visible: root.selectedDetail && root.selectedDetail.hours && String(root.selectedDetail.hours).trim().length > 0
+            height: weeklyCol.implicitHeight + Style.space(10)
+            Column {
+              id: weeklyCol
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.top: parent.top
+              anchors.topMargin: Style.space(6)
+              anchors.leftMargin: Style.space(10)
+              anchors.rightMargin: Style.space(10)
+              spacing: 2
+              Repeater {
+                model: root.selectedDetail ? Pot.parseWeeklyHours(root.selectedDetail.hours || "") : []
+                delegate: Rectangle {
+                  required property var modelData
+                  width: weeklyCol.width - Style.space(20)
+                  height: 22
+                  radius: 6
+                  color: modelData.isToday ? Util.alpha(Color.accent, 0.12) : "transparent"
+                  border.color: modelData.isToday ? Util.alpha(Color.accent, 0.22) : "transparent"
+                  border.width: modelData.isToday ? 1 : 0
+                  Row {
+                    anchors.fill: parent
+                    anchors.leftMargin: Style.space(8)
+                    anchors.rightMargin: Style.space(8)
+                    spacing: Style.space(8)
+                    Text {
+                      text: modelData.day
+                      color: modelData.isToday ? Color.accent : Util.alpha(Color.foreground, 0.85)
+                      font.family: Style.font.family
+                      font.pixelSize: 11
+                      font.bold: modelData.isToday
+                      width: 36
+                      anchors.verticalCenter: parent.verticalCenter
+                    }
+                    Text {
+                      text: modelData.hours
+                      color: modelData.isToday ? Color.foreground : Util.alpha(Color.foreground, 0.65)
+                      font.family: Style.font.family
+                      font.pixelSize: 11
+                      elide: Text.ElideRight
+                      width: parent.width - 44
+                      anchors.verticalCenter: parent.verticalCenter
+                    }
+                  }
+                }
+              }
+            }
+          }
+          Text {
+            visible: !root.selectedDetail || !root.selectedDetail.hours || String(root.selectedDetail.hours).trim().length === 0
+            text: "Hours unknown"
+            color: Util.alpha(Color.foreground, 0.5)
+            font.family: Style.font.family
+            font.pixelSize: 11
           }
         }
 

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "djc.pot-head",
   "name": "Pot Head",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": "djc",
   "license": "MIT",
   "description": "Top-bar dispensary finder: shows closest NY licensed dispensary via NYS Open Data + GPS, click for next 5 with hours, distance/ETA, navigate and visit site",
