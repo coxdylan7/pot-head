@@ -123,9 +123,11 @@ Item {
       + "    r['georeference']=geo_ref\n"
       + "    out.append(r)\n"
       + "print('FETCH', len(pri), len(priF), len(geo), len(out))\n"
-      + "pathlib.Path('" + dispensaryCache + "').write_text(json.dumps(out))\n"
-      + "if out:\n"
+      + "if len(out) > 0:\n"
+      + "  pathlib.Path('" + dispensaryCache + "').write_text(json.dumps(out))\n"
       + "  print(json.dumps(out[:1]))\n"
+      + "else:\n"
+      + "  print('not overwriting cache with empty')\n"
       + "PY\n"
     fetchProc.command = ["bash", "-c", cmd]
     fetchProc.running = true

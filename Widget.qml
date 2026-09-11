@@ -41,7 +41,7 @@ BarWidget {
   implicitWidth: Math.max(row.implicitWidth + Style.space(12) * 2, Style.bar.statusSlot + Style.space(8))
   implicitHeight: bar ? bar.barSize : 28
 
-  property var icons: ["🌿", "🔥", "💨", "✨"]
+  property var icons: ["🌿", "🔥", "💨"]
   property int iconIndex: 0
   Timer {
     id: iconCycle
