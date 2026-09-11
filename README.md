@@ -1,14 +1,14 @@
 # Pot Head
 
-Top-bar dispensary finder for Omarchy. Shows the **closest NY licensed dispensary** in your top bar (via NYS Open Data + GPS) — name only, as you requested — and on click reveals the **next 5 closest** with **store hours (today), distance, ETA**, plus **Navigate** and **Visit Site**.
+Top-bar dispensary finder for Omarchy. Shows the **closest NY licensed dispensary** in your top bar (via NYS Open Data + GPS) — name only — with a cycling `🌿`/`🔥`/`💨` icon, and on **hover** reveals the **next 5 closest** with **weekly hours (today highlighted), distance, ETA**, plus **Navigate** and **Visit Site**.
 
 ![preview](preview.png)
 
 ## Features
 
 - **Top-bar only, name only** — `🌿 Valley Greens Ltd.` in your bar (right section, `djc.pot-head`). No distance clutter.
-- **Click → next 5** — popup lists the next 5 closest dispensaries (so 6 total incl. bar) sorted by Haversine distance.
-- **Per-row:** `Name • Address • 0.7 mi • 2 min • Hours today • Open/Closed badge • [Navigate] [Site]` — hours parsed for today via `PotHead.js:parseHoursForToday()`.
+- **Hover → next 5** — hover the `🌿`/`🔥`/`💨` (cycles every 1.8s) to show popup with next 5 closest dispensaries (6 total incl. bar) sorted by Haversine distance; stays open while hovering popup.
+- **Per-row:** `Name • Address • 0.7 mi • 2 min • Hours today • Open/Closed badge • [Navigate] [Site]` — hours parsed for today via `PotHead.js` and weekly hours table in details (`parseWeeklyHours()` highlights today).
 - **Navigate:** `xdg-open https://www.google.com/maps/dir/?api=1&destination=lat,lon` (tap row also navigates).
 - **Visit Site:** `xdg-open <business_website>` (hidden when empty).
 - **NYS Open Data:** `data.ny.gov` Socrata `jskf-tt3q` (OCM Licenses, filtered `Active` retail) joined to `gttd-5u6y` (georeference `Point`) for lat/lon — single `?$limit=5000` fetch, join on `license_number = ocm_license_number`, cached to `~/.cache/omarchy/pot-head/dispensaries.json` (refresh `updateMinutes:360`).

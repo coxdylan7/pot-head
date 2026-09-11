@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "djc.pot-head",
   "name": "Pot Head",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "author": "djc",
   "license": "MIT",
-  "description": "Top-bar dispensary finder: shows closest NY licensed dispensary via NYS Open Data + GPS, click for next 5 with hours, distance/ETA, navigate and visit site",
+  "description": "Top-bar NY dispensary finder: hover for closest + next 5 licensed dispensaries via NYS Open Data + GPS, with weekly hours (today highlighted), distance/ETA, navigate and visit site \u2014 leaf/flame/smoke cycles",
   "kinds": [
     "service",
     "bar-widget"
@@ -17,7 +17,7 @@
   },
   "barWidget": {
     "displayName": "Pot Head",
-    "description": "Closest dispensary (NY OCM) — click for next 5 with hours, distance, navigate",
+    "description": "Closest dispensary (NY OCM) \u2014 hover for next 5 with weekly hours, distance, navigate",
     "category": "Status",
     "allowMultiple": false,
     "defaultSection": "right"
