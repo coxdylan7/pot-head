@@ -41,6 +41,16 @@ BarWidget {
   implicitWidth: Math.max(row.implicitWidth + Style.space(12) * 2, Style.bar.statusSlot + Style.space(8))
   implicitHeight: bar ? bar.barSize : 28
 
+  property var icons: ["🌿", "🔥", "💨", "✨"]
+  property int iconIndex: 0
+  Timer {
+    id: iconCycle
+    interval: 1800
+    running: true
+    repeat: true
+    onTriggered: root.iconIndex = (root.iconIndex + 1) % root.icons.length
+  }
+
   // Background hit area to make click reliable across full slot
   Rectangle {
     anchors.fill: parent
@@ -54,11 +64,23 @@ BarWidget {
     spacing: Style.space(6)
 
     Text {
-      text: "🌿"
+      id: iconText
+      text: root.icons[root.iconIndex]
       color: bar ? bar.foreground : Color.foreground
       font.family: bar ? bar.fontFamily : Style.font.family
       font.pixelSize: Style.font.body
       anchors.verticalCenter: parent.verticalCenter
+      Behavior on opacity { NumberAnimation { duration: 320; easing.type: Easing.InOutQuad } }
+      onTextChanged: {
+        opacity = 0
+        iconFade.restart()
+      }
+    }
+
+    Timer {
+      id: iconFade
+      interval: 50
+      onTriggered: iconText.opacity = 1
     }
 
     Text {
