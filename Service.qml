@@ -106,8 +106,8 @@ Item {
   }
 
   function ensureCacheDir() {
-    // Fixed argv, no shell construction, avoids quoting injection
-    cacheProc.command = ["mkdir", "-p", cacheDir]
+    // Fixed argv, no shell construction, avoids quoting injection - absolute trusted binary
+    cacheProc.command = ["/usr/bin/mkdir", "-p", cacheDir]
     cacheProc.running = true
   }
 
@@ -116,14 +116,14 @@ Item {
     // Helper validates apiUrl/geoApiUrl/appToken (no quote/newline, https only), enforces
     // timeout (10s) and byte cap (5 MiB) before parsing, uses private randomized temp
     // files in cacheDir with nofollow owner/type checks and atomic rename.
-    fetchProc.command = ["python3", helperFetch, apiUrl, geoApiUrl, appToken, dispensaryCache]
+    fetchProc.command = ["/usr/bin/python3", helperFetch, apiUrl, geoApiUrl, appToken, dispensaryCache]
     fetchProc.running = true
   }
 
   function loadCachedDispensaries() {
-    // Fixed argv python reader with byte cap - no shell, no symlink-before-read bypass for writes.
-    // Falls back to [] if missing/unreadable.
-    cacheReadProc.command = ["python3", "-c", "import pathlib,sys; p=pathlib.Path(sys.argv[1]);\ntry:\n data=p.read_bytes()[:2097152].decode()\n print(data)\nexcept: print('[]')\n", "--", dispensaryCache]
+    // Fixed argv python reader with byte cap - absolute trusted binary, no shell, descriptor-relative nofollow read.
+    // Falls back to [] if missing/unreadable. Uses O_NOFOLLOW via dir_fd to avoid symlink follow.
+    cacheReadProc.command = ["/usr/bin/python3", "-c", "import os,sys,stat\np=sys.argv[1]\nimport pathlib\ntry:\n d=os.path.dirname(p); b=os.path.basename(p)\n fd=os.open(d, os.O_DIRECTORY|os.O_NOFOLLOW)\n try:\n  fd2=os.open(b, os.O_RDONLY|os.O_NOFOLLOW, dir_fd=fd)\n  try:\n   data=os.read(fd2, 2097152)\n   sys.stdout.write(data.decode())\n  finally:\n   os.close(fd2)\n finally:\n  os.close(fd)\nexcept Exception:\n print('[]')\n", "--", dispensaryCache]
     cacheReadProc.running = true
   }
 
@@ -165,8 +165,8 @@ Item {
     locationError = ""
     // Fixed argv helper - no bash -c heredoc. Helper validates locationCache path, enforces
     // byte/time caps for all network calls (BeaconDB, ipinfo), and atomically caches result
-    // via randomized staging + nofollow checks before printing JSON.
-    locationProc.command = ["python3", helperLocation, locationCache]
+    // via randomized staging + nofollow checks before printing JSON. Absolute trusted binary.
+    locationProc.command = ["/usr/bin/python3", helperLocation, locationCache]
     locationProc.collected = ""
     locationProc.running = true
   }
@@ -187,11 +187,11 @@ Item {
         locationError = ""
         // helperLocation already atomically cached via staging+rename; keep explicit write
         // as backup using fixed argv helper that validates json and path, no heredoc.
-        // Use helperWriteLocation with argv separation - JSON passed as argv, not shell.
+        // Use helperWriteLocation with argv separation - JSON passed as argv, not shell. Absolute trusted binary.
         try {
           var jstr = JSON.stringify(j)
           if (jstr.length < 65536) {
-            cacheLocationProc.command = ["python3", helperWriteLocation, locationCache, jstr]
+            cacheLocationProc.command = ["/usr/bin/python3", helperWriteLocation, locationCache, jstr]
             cacheLocationProc.running = true
           }
         } catch(e2) { console.log("pot-head: cache write helper error " + e2) }
@@ -215,7 +215,7 @@ Item {
       return
     }
     var url = "https://www.google.com/maps/dir/?api=1&destination=" + dispensary.lat + "," + dispensary.lon
-    navProc.command = ["xdg-open", url]
+    navProc.command = ["/usr/bin/xdg-open", url]
     navProc.running = true
   }
 
@@ -226,7 +226,7 @@ Item {
       return
     }
     if (url.indexOf("http") !== 0) url = "https://" + url
-    siteProc.command = ["xdg-open", url]
+    siteProc.command = ["/usr/bin/xdg-open", url]
     siteProc.running = true
   }
 

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 """Fetch dispensaries securely with timeout/byte caps and atomic nofollow writes."""
 import sys
 import os
@@ -10,6 +10,7 @@ import urllib.parse
 import urllib.error
 import stat
 import re
+import secrets
 
 MAX_BYTES = 5 * 1024 * 1024  # 5 MiB cap per endpoint (covers 5000-record Socrata)
 TIMEOUT = 10  # seconds
@@ -85,48 +86,54 @@ def validate_cache_path(p):
 
 def ensure_parent_secure(path):
     parent = os.path.dirname(path)
-    # mkdir -p with secure checks: create parents if needed, but verify no symlink in chain
-    # Walk from HOME/.cache to parent, ensure each component is not symlink and owned by uid
-    home = os.environ.get("HOME") or str(pathlib.Path.home())
-    # Create parent with exist_ok True, but after creation, verify
     try:
         pathlib.Path(parent).mkdir(parents=True, exist_ok=True)
+        os.chmod(parent, 0o700)
     except Exception as e:
         fail(f"mkdir parent failed: {e}")
-    # Now walk and verify no symlink, dir, owned
-    # Build path parts from home to parent
-    # Use lstat for each component
-    uid = os.getuid()
-    # Verify parent and its ancestors up to HOME/.cache
-    # To avoid TOCTOU, lstat each
-    p = pathlib.Path(parent)
-    # Check parent itself
-    for cur in [p] + list(p.parents):
-        # stop at HOME
+    try:
+        dir_fd = os.open(parent, os.O_DIRECTORY | os.O_NOFOLLOW)
+    except Exception as e:
+        fail(f"open parent dir failed: {e}")
+    try:
         try:
+            st = os.fstat(dir_fd)
+        except Exception as e:
+            fail(f"fstat parent failed: {e}")
+        if not stat.S_ISDIR(st.st_mode):
+            fail(f"parent not directory: {parent}")
+        if stat.S_ISLNK(st.st_mode):
+            fail(f"parent is symlink: {parent}")
+        if st.st_uid != os.getuid():
+            fail(f"parent not owned: {parent}")
+        if st.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+            fail(f"parent writable by group/other: {parent} mode {oct(st.st_mode)}")
+        uid = os.getuid()
+        home = os.environ.get("HOME") or str(pathlib.Path.home())
+        for cur in [pathlib.Path(parent)] + list(pathlib.Path(parent).parents):
             cur_str = str(cur)
             if cur_str == home or cur_str.startswith(os.path.join(home, ".cache")):
-                # only check those under home/.cache
-                st = os.lstat(cur_str)
-                if stat.S_ISLNK(st.st_mode):
-                    fail(f"parent component is symlink: {cur_str}")
-                if not stat.S_ISDIR(st.st_mode):
-                    fail(f"parent component not directory: {cur_str}")
-                if st.st_uid != uid:
-                    fail(f"parent component not owned by user: {cur_str}")
-                # check perms not world-writable suspicious? allow but warn
-            else:
-                # if cur is outside home/.cache, stop walking when we leave prefix
-                if len(cur_str) < len(home):
-                    break
-        except FileNotFoundError:
-            continue
-        except SystemExit:
-            raise
-        except Exception as e:
-            fail(f"parent check failed {cur}: {e}")
-        if cur_str == home:
-            break
+                try:
+                    st2 = os.lstat(cur_str)
+                    if stat.S_ISLNK(st2.st_mode):
+                        fail(f"parent component is symlink: {cur_str}")
+                    if not stat.S_ISDIR(st2.st_mode):
+                        fail(f"parent component not directory: {cur_str}")
+                    if st2.st_uid != uid:
+                        fail(f"parent component not owned: {cur_str}")
+                    if st2.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+                        fail(f"parent component writable by group/other: {cur_str} mode {oct(st2.st_mode)}")
+                except FileNotFoundError:
+                    continue
+                except SystemExit:
+                    raise
+                except Exception as e:
+                    fail(f"parent check failed {cur}: {e}")
+            if cur_str == home:
+                break
+    finally:
+        try: os.close(dir_fd)
+        except: pass
 
 def fetch_url(url, token):
     # Append ?$limit=5000 if not already has query
@@ -165,44 +172,87 @@ def fetch_url(url, token):
         fail(f"fetch failed {url}: {e}")
 
 def atomic_write(path, data_bytes):
-    ensure_parent_secure(path)
-    # lstat destination if exists, ensure not symlink and is regular file
-    uid = os.getuid()
-    try:
-        st = os.lstat(path)
-        if stat.S_ISLNK(st.st_mode):
-            fail(f"destination is symlink: {path}")
-        if not stat.S_ISREG(st.st_mode):
-            fail(f"destination not regular file: {path}")
-        if st.st_uid != uid:
-            fail(f"destination not owned by user: {path}")
-    except FileNotFoundError:
-        pass
     parent = os.path.dirname(path)
-    fd = -1
-    tmp = None
+    base = os.path.basename(path)
     try:
-        fd, tmp = tempfile.mkstemp(dir=parent, prefix=".pot-head-tmp-")
-        # mkstemp creates 600 perms already, ensure
-        os.fchmod(fd, 0o600)
-        # Write
-        n = os.write(fd, data_bytes)
-        if n != len(data_bytes):
-            fail("short write")
-        os.fsync(fd)
-        os.close(fd)
-        fd = -1
-        # Ensure tmp is not symlink (mkstemp guarantees regular file)
-        st_tmp = os.lstat(tmp)
-        if not stat.S_ISREG(st_tmp.st_mode) or stat.S_ISLNK(st_tmp.st_mode):
-            fail("tmp not regular file")
-        if st_tmp.st_uid != uid:
-            fail("tmp not owned")
-        # Atomic rename
-        os.rename(tmp, path)
-        tmp = None
-        # Final chmod 600
-        os.chmod(path, 0o600)
+        pathlib.Path(parent).mkdir(parents=True, exist_ok=True)
+        os.chmod(parent, 0o700)
+    except Exception as e:
+        fail(f"mkdir parent failed: {e}")
+    try:
+        dir_fd = os.open(parent, os.O_DIRECTORY | os.O_NOFOLLOW)
+    except Exception as e:
+        fail(f"open parent dir failed: {e}")
+    try:
+        try:
+            st = os.fstat(dir_fd)
+        except Exception as e:
+            fail(f"fstat parent failed: {e}")
+        if not stat.S_ISDIR(st.st_mode):
+            fail(f"parent not directory: {parent}")
+        if stat.S_ISLNK(st.st_mode):
+            fail(f"parent is symlink: {parent}")
+        if st.st_uid != os.getuid():
+            fail(f"parent not owned: {parent}")
+        if st.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+            fail(f"parent writable by group/other: {parent}")
+        uid = os.getuid()
+        try:
+            st = os.stat(base, dir_fd=dir_fd, follow_symlinks=False)
+            if stat.S_ISLNK(st.st_mode):
+                fail(f"destination is symlink: {path}")
+            if not stat.S_ISREG(st.st_mode):
+                fail(f"destination not regular file: {path}")
+            if st.st_uid != uid:
+                fail(f"destination not owned: {path}")
+            if st.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+                fail(f"destination writable by group/other: {path}")
+        except FileNotFoundError:
+            pass
+        tmp_name = f".pot-head-tmp-{__import__('secrets').token_hex(8)}"
+        try:
+            fd = os.open(tmp_name, os.O_CREAT | os.O_EXCL | os.O_RDWR | os.O_NOFOLLOW, 0o600, dir_fd=dir_fd)
+        except Exception as e:
+            fail(f"create tmp failed: {e}")
+        try:
+            n = os.write(fd, data_bytes)
+            if n != len(data_bytes):
+                fail("short write")
+            os.fsync(fd)
+            os.close(fd)
+            fd = -1
+            try:
+                st_tmp = os.stat(tmp_name, dir_fd=dir_fd, follow_symlinks=False)
+                if not stat.S_ISREG(st_tmp.st_mode) or stat.S_ISLNK(st_tmp.st_mode):
+                    fail("tmp not regular file")
+                if st_tmp.st_uid != uid:
+                    fail("tmp not owned")
+                if st_tmp.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+                    fail("tmp writable by group/other")
+            except Exception as e:
+                fail(f"tmp check failed: {e}")
+            try:
+                os.rename(tmp_name, base, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+            except TypeError:
+                tmp_abs = os.path.join(parent, tmp_name)
+                os.rename(tmp_abs, path)
+            tmp_name = None
+            try:
+                os.chmod(base, 0o600, dir_fd=dir_fd)
+            except:
+                os.chmod(path, 0o600)
+        finally:
+            if fd >= 0:
+                try: os.close(fd)
+                except: pass
+            if tmp_name is not None:
+                try: os.unlink(tmp_name, dir_fd=dir_fd)
+                except: pass
+                try: os.unlink(os.path.join(parent, tmp_name))
+                except: pass
+    finally:
+        try: os.close(dir_fd)
+        except: pass
     finally:
         if fd >= 0:
             try:
