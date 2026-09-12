@@ -253,17 +253,6 @@ def atomic_write(path, data_bytes):
     finally:
         try: os.close(dir_fd)
         except: pass
-    finally:
-        if fd >= 0:
-            try:
-                os.close(fd)
-            except:
-                pass
-        if tmp is not None:
-            try:
-                os.unlink(tmp)
-            except:
-                pass
 
 def main():
     if len(sys.argv) != 5:
