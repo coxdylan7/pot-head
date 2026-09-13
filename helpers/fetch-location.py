@@ -10,6 +10,176 @@ import re
 import time
 import stat
 import secrets
+def open_trusted_base(home_path):
+    # Open HOME with O_DIRECTORY|O_NOFOLLOW and validate
+    try:
+        fd = os.open(home_path, os.O_DIRECTORY | os.O_NOFOLLOW)
+    except Exception as e:
+        fail(f"open HOME failed: {e}")
+    try:
+        st = os.fstat(fd)
+    except Exception as e:
+        try: os.close(fd)
+        except: pass
+        fail(f"fstat HOME failed: {e}")
+    if not stat.S_ISDIR(st.st_mode):
+        try: os.close(fd)
+        except: pass
+        fail(f"HOME not directory: {home_path}")
+    if stat.S_ISLNK(st.st_mode):
+        try: os.close(fd)
+        except: pass
+        fail(f"HOME is symlink: {home_path}")
+    if st.st_uid != os.getuid():
+        try: os.close(fd)
+        except: pass
+        fail(f"HOME not owned: {home_path}")
+    if st.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        try: os.close(fd)
+        except: pass
+        fail(f"HOME writable by group/other: {home_path} mode {oct(st.st_mode)}")
+    return fd
+
+def ensure_parent_descriptor_relative(home_fd, home_path, parent_path):
+    # parent_path is absolute, must be under home_path
+    if not parent_path.startswith(home_path + os.sep):
+        fail(f"parent not under HOME: {parent_path}")
+    rel = os.path.relpath(parent_path, home_path)  # e.g. .config/hypr
+    parts = rel.split(os.sep)
+    cur_fd = home_fd
+    cur_path = home_path
+    # We will walk components, opening each descriptor-relatively, creating if needed via mkdirat
+    # To avoid leaking fds, we keep current fd and open next, then close previous when moving deeper
+    # But we need to keep home_fd open for caller? We'll duplicate.
+    # Instead, we will use home_fd as base and walk with new fds, closing intermediate.
+    # For simplicity, we dup home_fd to start
+    try:
+        cur_fd_dup = os.dup(home_fd)
+    except Exception as e:
+        fail(f"dup HOME fd failed: {e}")
+    cur_fd = cur_fd_dup
+    cur_path = home_path
+    for comp in parts:
+        if not comp or comp == ".":
+            continue
+        if comp == ".." or "/" in comp or "\n" in comp or "\0" in comp:
+            try: os.close(cur_fd)
+            except: pass
+            fail(f"invalid component: {comp}")
+        # Try to open next component with O_NOFOLLOW
+        next_path = os.path.join(cur_path, comp)
+        try:
+            next_fd = os.open(comp, os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=cur_fd)
+            # Validate opened dir
+            try:
+                st = os.fstat(next_fd)
+            except Exception as e:
+                try: os.close(next_fd)
+                except: pass
+                try: os.close(cur_fd)
+                except: pass
+                fail(f"fstat component failed {next_path}: {e}")
+            if not stat.S_ISDIR(st.st_mode):
+                try: os.close(next_fd)
+                except: pass
+                try: os.close(cur_fd)
+                except: pass
+                fail(f"component not directory: {next_path}")
+            if stat.S_ISLNK(st.st_mode):
+                try: os.close(next_fd)
+                except: pass
+                try: os.close(cur_fd)
+                except: pass
+                fail(f"component is symlink: {next_path}")
+            if st.st_uid != os.getuid():
+                try: os.close(next_fd)
+                except: pass
+                try: os.close(cur_fd)
+                except: pass
+                fail(f"component not owned: {next_path}")
+            if st.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+                try: os.close(next_fd)
+                except: pass
+                try: os.close(cur_fd)
+                except: pass
+                fail(f"component writable by group/other: {next_path} mode {oct(st.st_mode)}")
+            # Success, move to next
+            try: os.close(cur_fd)
+            except: pass
+            cur_fd = next_fd
+            cur_path = next_path
+        except FileNotFoundError:
+            # Need to create directory descriptor-relatively via mkdirat
+            try:
+                os.mkdir(comp, 0o700, dir_fd=cur_fd)
+            except FileExistsError:
+                # Raced, try open again
+                try:
+                    next_fd = os.open(comp, os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=cur_fd)
+                    st = os.fstat(next_fd)
+                    if st.st_uid != os.getuid() or st.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+                        try: os.close(next_fd)
+                        except: pass
+                        try: os.close(cur_fd)
+                        except: pass
+                        fail(f"raced component not owned/writable: {next_path}")
+                    try: os.close(cur_fd)
+                    except: pass
+                    cur_fd = next_fd
+                    cur_path = next_path
+                    continue
+                except Exception as e:
+                    try: os.close(cur_fd)
+                    except: pass
+                    fail(f"mkdir raced open failed {next_path}: {e}")
+            except Exception as e:
+                try: os.close(cur_fd)
+                except: pass
+                fail(f"mkdir component failed {next_path}: {e}")
+            # After mkdir, open it
+            try:
+                next_fd = os.open(comp, os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=cur_fd)
+            except Exception as e:
+                try: os.close(cur_fd)
+                except: pass
+                fail(f"open after mkdir failed {next_path}: {e}")
+            # Validate and chmod via fd (fchmod) to 0o700
+            try:
+                st = os.fstat(next_fd)
+                if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid():
+                    try: os.close(next_fd)
+                    except: pass
+                    try: os.close(cur_fd)
+                    except: pass
+                    fail(f"new component not owned/dir: {next_path}")
+                # Ensure perms 0o700 via fchmod
+                try:
+                    os.fchmod(next_fd, 0o700)
+                except Exception as e:
+                    try: os.close(next_fd)
+                    except: pass
+                    try: os.close(cur_fd)
+                    except: pass
+                    fail(f"fchmod failed {next_path}: {e}")
+            except Exception as e:
+                try: os.close(next_fd)
+                except: pass
+                try: os.close(cur_fd)
+                except: pass
+                fail(f"fstat new component failed {next_path}: {e}")
+            try: os.close(cur_fd)
+            except: pass
+            cur_fd = next_fd
+            cur_path = next_path
+        except OSError as e:
+            # Any other error (e.g., symlink encountered, ELOOP)
+            try: os.close(cur_fd)
+            except: pass
+            fail(f"open component failed {next_path}: {e}")
+    # cur_fd is now the parent directory fd, pinned
+    return cur_fd
+
+
 import urllib.request
 import urllib.error
 
@@ -36,15 +206,18 @@ def validate_cache_path(p):
 
 def ensure_parent_secure(path):
     parent = os.path.dirname(path)
+    home = os.environ.get("HOME") or str(pathlib.Path.home())
+    home_fd = open_trusted_base(home)
     try:
-        pathlib.Path(parent).mkdir(parents=True, exist_ok=True)
-        os.chmod(parent, 0o700)
+        dir_fd = ensure_parent_descriptor_relative(home_fd, home, parent)
+        try:
+            os.fchmod(dir_fd, 0o700)
+        except Exception as e:
+            fail(f"fchmod parent failed: {e}")
     except Exception as e:
-        fail(f"mkdir parent failed: {e}")
-    try:
-        dir_fd = os.open(parent, os.O_DIRECTORY | os.O_NOFOLLOW)
-    except Exception as e:
-        fail(f"open parent dir failed: {e}")
+        try: os.close(home_fd)
+        except: pass
+        fail(f"ensure parent failed: {e}")
     try:
         # Use pinned FD check
         try:
@@ -115,15 +288,18 @@ def atomic_write_json(path, obj):
         fail("location json too large")
     parent = os.path.dirname(path)
     base = os.path.basename(path)
+    home = os.environ.get("HOME") or str(pathlib.Path.home())
+    home_fd = open_trusted_base(home)
     try:
-        pathlib.Path(parent).mkdir(parents=True, exist_ok=True)
-        os.chmod(parent, 0o700)
+        dir_fd = ensure_parent_descriptor_relative(home_fd, home, parent)
+        try:
+            os.fchmod(dir_fd, 0o700)
+        except Exception as e:
+            fail(f"fchmod parent failed: {e}")
     except Exception as e:
-        fail(f"mkdir parent failed: {e}")
-    try:
-        dir_fd = os.open(parent, os.O_DIRECTORY | os.O_NOFOLLOW)
-    except Exception as e:
-        fail(f"open parent dir failed: {e}")
+        try: os.close(home_fd)
+        except: pass
+        fail(f"ensure parent failed: {e}")
     try:
         # pinned FD check
         try:
@@ -175,22 +351,21 @@ def atomic_write_json(path, obj):
                 fail(f"tmp check failed: {e}")
             try:
                 os.rename(tmp_name, base, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
-            except TypeError:
-                tmp_abs = os.path.join(parent, tmp_name)
-                os.rename(tmp_abs, path)
+            except TypeError as e:
+                fail(f"rename with dir_fd not supported, failing closed: {e}")
+            except Exception as e:
+                fail(f"rename failed: {e}")
             tmp_name = None
             try:
                 os.chmod(base, 0o600, dir_fd=dir_fd)
-            except:
-                os.chmod(path, 0o600)
+            except Exception as e:
+                fail(f"chmod final failed: {e}")
         finally:
             if fd >= 0:
                 try: os.close(fd)
                 except: pass
             if tmp_name is not None:
                 try: os.unlink(tmp_name, dir_fd=dir_fd)
-                except: pass
-                try: os.unlink(os.path.join(parent, tmp_name))
                 except: pass
     finally:
         try: os.close(dir_fd)
